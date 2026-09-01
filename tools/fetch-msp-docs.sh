@@ -326,9 +326,14 @@ def sub_ip(m):
 def redact(text):
     if token and len(token) >= 8:
         text = text.replace(token, "<REDACTED-CREDENTIAL>")
-    if domain:
-        text = text.replace(domain, "<MSP-DOMAIN>")
-        text = text.replace(domain.split(".")[0], "<MSP-ID>")
+    # Substring replacement, unanchored, corrupts ordinary prose: a two-letter value
+    # rewrote every "name" into "<MSP-DOMAIN>me". Require a plausible hostname and
+    # match on word boundaries.
+    if domain and len(domain) >= 6 and "." in domain:
+        text = re.sub(r"\b%s\b" % re.escape(domain), "<MSP-DOMAIN>", text)
+        first = domain.split(".")[0]
+        if len(first) >= 4:
+            text = re.sub(r"\b%s\b" % re.escape(first), "<MSP-ID>", text)
     text = IPV4.sub(sub_ip, text)
     # MAC before IPv6: a MAC also matches the IPv6 pattern and would be mislabelled.
     text = MAC.sub(lambda m: label("MAC", m.group(0)), text)
