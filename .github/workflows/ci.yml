@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Backstop against committing a real address from an incident. See SECURITY.md.
+      - name: No real IP literals
+        run: python3 tools/check-no-real-ips.py
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -t . -v
+
+      - name: Shell syntax
+        run: for f in tools/*.sh; do bash -n "$f"; done
+
+      - name: Compose file is valid
+        run: docker compose -f compose.yml config >/dev/null
+
+  smoke:
+    # Asserts the container actually captures. The most likely regression is a
+    # capability/privilege-drop interaction that makes tcpdump exit at startup while
+    # the container still looks healthy.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t recorder:ci .
+      # Proves /data is writable before blaming the recorder for failing to open it.
+      - name: Data volume is writable under a read-only rootfs
+        run: |
+          docker volume create recdata >/dev/null
+          docker run --rm --read-only --tmpfs /tmp -v recdata:/data \
+            --entrypoint sh recorder:ci -c \
+            'ls -ld /data && touch /data/.probe && echo "/data is writable" && rm -f /data/.probe'
+
+      - name: Capture must produce rows
+        run: |
+          # A named volume, matching what compose.yml actually deploys.
+          docker run -d --name rec --network host \
+            --cap-drop ALL --cap-add NET_RAW --cap-add SETUID --cap-add SETGID \
+            --security-opt no-new-privileges:true \
+            --read-only --tmpfs /tmp -v recdata:/data \
+            -e HISTORY_MINUTES=60 recorder:ci capture
+          sleep 5
+
+          # A container that exits immediately is the failure this job exists to catch,
+          # and it is invisible unless the logs are printed. Check that first.
+          if [ "$(docker inspect -f '{{.State.Running}}' rec)" != "true" ]; then
+            echo "::error::recorder container is not running"
+            echo "--- exit code ---";   docker inspect -f '{{.State.ExitCode}}' rec
+            echo "--- docker logs ---"; docker logs rec 2>&1 | tail -50
+            exit 1
+          fi
+
+          curl -s -o /dev/null https://example.com || true
+          getent hosts github.com >/dev/null || true
+          sleep 5
+
+          echo "--- logs ---";   docker logs rec 2>&1 | tail -20
+          echo "--- status ---"; docker exec rec status || true
+          echo "--- recent ---"; docker exec rec recent 5 || true
+
+          # A running-but-not-capturing container looks identical to a healthy one.
+          rows=$(docker exec rec recent 50 | grep -cE '^[0-9]{4}-' || true)
+          echo "captured flow rows: $rows"
+          if [ "$rows" -lt 1 ]; then
+            echo "::error::container is running but captured no flows"
+            docker logs rec 2>&1 | tail -50
+            exit 1
+          fi
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs rec 2>&1 | tail -100 || true

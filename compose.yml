@@ -1,0 +1,88 @@
+# Umbrel Egress Recorder — Portainer stack
+#
+# Deploy as a Portainer stack on the Umbrel host. No web interface is exposed.
+#
+# BEFORE DEPLOYING: replace the image below with a digest-pinned reference.
+#   ghcr.io/douglasring/umbrel-egress-recorder@sha256:<digest>
+# A mutable :latest tag, auto-pulled by a container holding NET_RAW in the host
+# network namespace, is the highest-leverage compromise path in this design.
+
+services:
+  egress-recorder:
+    image: ghcr.io/douglasring/umbrel-egress-recorder:latest
+    container_name: umbrel-egress-recorder
+    network_mode: host
+    restart: unless-stopped
+
+    # NET_RAW is the minimum for packet capture. It is also not passive: in the
+    # host network namespace it permits packet injection. See README, "Residual risk".
+    #
+    # SETUID/SETGID are required, not optional. Debian/Ubuntu tcpdump is built
+    # --with-user=tcpdump and always drops privileges at startup; droproot() runs even
+    # when the target user is root, so it cannot be turned off with -Z. Without these
+    # two capabilities tcpdump exits immediately with EPERM and nothing is captured.
+    #
+    # Since they are required anyway, the recorder uses "-Z nobody" so tcpdump really
+    # does end up unprivileged after opening the capture socket.
+    #
+    # Do NOT add `user:` here — Docker does not set ambient capabilities, so a non-root
+    # process gets CapPrm=0 and AF_PACKET fails with EPERM.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+      - SETUID
+      - SETGID
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: true
+
+    # Python as PID 1 ignores SIGTERM, so `docker stop` would hang for the full
+    # grace period and then SIGKILL, losing buffered flow state.
+    init: true
+    stop_grace_period: 15s
+
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: "0.50"
+
+    # Without this, a crash-looping recorder fills the host disk through json-file
+    # logs — on a host that is also running a Bitcoin node.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Must assert that rows are advancing, not merely that a PID exists: the cgroup
+    # OOM killer can kill tcpdump while the container stays "running" and the parser
+    # sits forever on an empty pipe. A healthcheck alone does not restart anything —
+    # the healthcheck binary exits non-zero and the supervisor inside the image exits,
+    # which `restart: unless-stopped` then acts on.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+
+    volumes:
+      - egress-data:/data
+
+    environment:
+      # 24h, to match the triage latency this tool exists to survive and the 24h
+      # flow history the alerting firewall itself keeps.
+      HISTORY_MINUTES: "1440"
+      # Enforced on live bytes — (page_count - freelist_count) * page_size — never
+      # on the file size. DELETE does not shrink a SQLite file.
+      MAX_DB_MB: "64"
+      # How often kernel drop counters are sampled from tcpdump via SIGUSR1.
+      CAPSTAT_INTERVAL_SECONDS: "10"
+
+volumes:
+  egress-data:

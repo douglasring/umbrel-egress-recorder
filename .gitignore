@@ -1,0 +1,16 @@
+# Captured data must never be committed. See SECURITY.md.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.pcap
+*.pcapng
+ip-ledger*.tsv
+/data/
+
+# Build / test debris
+*.deb
+__pycache__/
+*.py[cod]
+.venv/
