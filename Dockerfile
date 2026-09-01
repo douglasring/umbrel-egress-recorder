@@ -42,7 +42,7 @@ COPY recorder/ /app/recorder/
 
 # Thin wrappers so the documented `docker exec umbrel-egress-recorder lookup <ip>` works.
 RUN set -eux; \
-    for cmd in lookup status recent healthcheck; do \
+    for cmd in lookup report status recent healthcheck; do \
       printf '#!/bin/sh\nexec python3 -m recorder %s "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod 0755 /usr/local/bin/$cmd; \
     done

@@ -104,3 +104,48 @@ class TestStore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReportRedaction(unittest.TestCase):
+    """`report` must not leak the LAN address or unrelated peers."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.s = Store(os.path.join(self.dir.name, "r.db"), history_minutes=1440)
+        self.s.start_session("bpf", {})
+        now = int(time.time())
+        self.s.upsert_batch([
+            ("veth0", "other", 17, "10.21.22.11", 19466, "203.0.113.42", 34567, now),
+            ("eth0", "out", 17, "192.168.1.50", 19466, "203.0.113.42", 34567, now),
+            # An unrelated peer that must never appear in a report for the address above.
+            ("eth0", "out", 6, "192.168.1.50", 9735, "198.51.100.99", 9735, now),
+        ])
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def _report(self, *args):
+        import io, contextlib
+        from recorder import cli
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.cmd_report(self.s, list(args))
+        return buf.getvalue()
+
+    def test_report_masks_lan_address(self):
+        out = self._report("203.0.113.42", "34567")
+        self.assertNotIn("192.168.1.50", out)
+        self.assertIn("<this node>", out)
+
+    def test_report_keeps_prenat_container_address(self):
+        out = self._report("203.0.113.42", "34567")
+        self.assertIn("10.21.22.11", out)
+
+    def test_report_excludes_unrelated_peers(self):
+        out = self._report("203.0.113.42", "34567")
+        self.assertNotIn("198.51.100.99", out)
+
+    def test_report_no_match_still_states_coverage(self):
+        out = self._report("203.0.113.7")
+        self.assertIn("NO MATCH", out)
+        self.assertIn("COVERAGE", out)

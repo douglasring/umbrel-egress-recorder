@@ -129,6 +129,106 @@ def cmd_lookup(store, args):
     return 0
 
 
+def _is_container_iface(iface):
+    """Bridge/veth side = the container. Anything else = your LAN uplink."""
+    return iface.startswith(("veth", "br-", "docker"))
+
+
+def cmd_report(store, args):
+    """A shareable summary of one endpoint.
+
+    `lookup` output is for you. This is for sending to someone else: it keeps what
+    an analyst needs (the flagged endpoint, the container that spoke to it, timing,
+    volume, and how trustworthy the coverage is) and drops what identifies your
+    network - your LAN address, and every unrelated peer.
+    """
+    if not args:
+        sys.stderr.write("usage: report <ip> [port]\n")
+        return 2
+    target = _normalise(args[0])
+    port = None
+    if len(args) > 1:
+        try:
+            port = int(args[1])
+        except ValueError:
+            sys.stderr.write("error: %r is not a port\n" % args[1])
+            return 2
+
+    window = store.history_seconds
+    cov = store.coverage(window)
+    rows = store.lookup(target, port, since=int(time.time()) - window)
+
+    print("EGRESS REPORT - safe to share (local addresses masked)")
+    print("=" * 62)
+    print("Endpoint queried : %s%s" % (target, (":%d" % port) if port else ""))
+
+    if not rows:
+        print()
+        print("RESULT           : NO MATCH")
+        print(_banner(cov))
+        print()
+        print("A non-match is only as good as the coverage line above.")
+        return 0
+
+    protos = sorted({PROTO.get(r[4], str(r[4])) for r in rows})
+    first = min(r[0] for r in rows)
+    last = max(r[1] for r in rows)
+    pkts = sum(r[9] for r in rows)
+
+    print("Protocol         : %s" % ", ".join(protos))
+    print("First seen (UTC) : %s" % _utc(first))
+    print("Last seen (UTC)  : %s" % _utc(last))
+    print("Observations     : %s packets across %d capture point(s)"
+          % (format(pkts, ","), len({r[2] for r in rows})))
+    print()
+    print("ATTRIBUTION")
+
+    container_rows = [r for r in rows if _is_container_iface(r[2])]
+    uplink_rows = [r for r in rows if not _is_container_iface(r[2])]
+
+    if container_rows:
+        seen = set()
+        for r in container_rows:
+            # The local end of the flow is whichever side is not the queried endpoint.
+            local, lport = (r[5], r[6]) if r[7] == target else (r[7], r[8])
+            if (local, lport) in seen:
+                continue
+            seen.add((local, lport))
+            print("  pre-NAT source : %s:%d   <- map this to a container" % (local, lport))
+    else:
+        print("  pre-NAT source : not observed")
+        print("                   (no bridge-side capture; the traffic may originate on")
+        print("                    the host itself, or from a host-networked container)")
+
+    if uplink_rows:
+        r = uplink_rows[0]
+        lport = r[6] if r[7] == target else r[8]
+        direction = r[3]
+        print("  post-NAT source: <this node>:%d" % lport)
+        print("  direction      : %s" % (
+            "OUTBOUND - this node initiated the connection" if direction == "out"
+            else "INBOUND - the remote end initiated it" if direction == "in"
+            else "unclear"))
+
+    print()
+    print("COVERAGE")
+    for line in _banner(cov).splitlines():
+        print("  " + line.strip())
+
+    print()
+    print("CAVEATS")
+    print("  - A reputation hit does not prove malice. Hosting providers serve many")
+    print("    unrelated customers and reputation feeds produce false positives.")
+    print("  - If this node uses Tor, the endpoint may be a RELAY rather than a final")
+    print("    destination, and the pre-NAT source may be the Tor container - in which")
+    print("    case attribution stops there and says nothing about the app behind it.")
+    print("  - Only packet headers were recorded. No payload was captured, so this")
+    print("    cannot show what was sent.")
+    print()
+    print("Masked: this node's LAN address, and all peers unrelated to the query.")
+    return 0
+
+
 def cmd_recent(store, args):
     limit = 20
     if args:
@@ -185,4 +285,9 @@ def cmd_status(store, _args):
     return 0 if (session and not session[3] and not cov["degraded_since"]) else 1
 
 
-COMMANDS = {"lookup": cmd_lookup, "recent": cmd_recent, "status": cmd_status}
+COMMANDS = {
+    "lookup": cmd_lookup,
+    "report": cmd_report,
+    "recent": cmd_recent,
+    "status": cmd_status,
+}
