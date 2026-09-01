@@ -2,14 +2,16 @@
 #
 # Deploy as a Portainer stack on the Umbrel host. No web interface is exposed.
 #
-# BEFORE DEPLOYING: replace the image below with a digest-pinned reference.
-#   ghcr.io/douglasring/umbrel-egress-recorder@sha256:<digest>
-# A mutable :latest tag, auto-pulled by a container holding NET_RAW in the host
-# network namespace, is the highest-leverage compromise path in this design.
+# The image is pinned by digest below. A mutable :latest tag, auto-pulled by a
+# container holding NET_RAW in the host network namespace, is the highest-leverage
+# compromise path in this design, so update the digest deliberately.
+#
+# Deliberately avoids constructs the Portainer stack editor rejects: no `version:`
+# key, no Docker-CLI-only tmpfs option syntax, and no quoted `cpus`.
 
 services:
   egress-recorder:
-    image: ghcr.io/douglasring/umbrel-egress-recorder:latest
+    image: ghcr.io/douglasring/umbrel-egress-recorder@sha256:0be43bfe24456d0c4cd00dabf560e889ca2444ff8f7c0605ebf188c2163ae6a4
     container_name: umbrel-egress-recorder
     network_mode: host
     restart: unless-stopped
@@ -46,7 +48,7 @@ services:
 
     pids_limit: 64
     mem_limit: 256m
-    cpus: "0.50"
+    cpus: 0.5
 
     # Without this, a crash-looping recorder fills the host disk through json-file
     # logs — on a host that is also running a Bitcoin node.
@@ -68,8 +70,13 @@ services:
       retries: 3
       start_period: 30s
 
+    # Plain path form. The `- /tmp:size=...,noexec,...` short syntax is a Docker CLI
+    # extension, not Compose Spec, and some parsers (including Portainer's stack
+    # editor) reject it. /tmp is barely used here - SQLite runs with
+    # temp_store=MEMORY - so the sizing and noexec flags are not worth the
+    # portability cost.
     tmpfs:
-      - /tmp:size=16m,noexec,nosuid,nodev
+      - /tmp
 
     volumes:
       - egress-data:/data
