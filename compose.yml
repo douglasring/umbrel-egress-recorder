@@ -91,5 +91,70 @@ services:
       # How often kernel drop counters are sampled from tcpdump via SIGUSR1.
       CAPSTAT_INTERVAL_SECONDS: "10"
 
+  # ---------------------------------------------------------------------------
+  # Firewalla alarm agent - OPTIONAL. Delete this service if you only want the
+  # recorder. It does nothing until MSP_DOMAIN and MSP_TOKEN are set.
+  #
+  # Deliberately a SEPARATE container from the recorder. This one holds API
+  # credentials; the recorder holds none but has NET_RAW and the host network
+  # namespace. Merging them would put credentials in the one container that can
+  # inject packets on your LAN.
+  # ---------------------------------------------------------------------------
+  alarm-agent:
+    image: ghcr.io/douglasring/umbrel-egress-recorder@sha256:0be43bfe24456d0c4cd00dabf560e889ca2444ff8f7c0605ebf188c2163ae6a4
+    container_name: umbrel-alarm-agent
+    entrypoint: ["python3", "-m", "agent"]
+    restart: unless-stopped
+    depends_on:
+      - egress-recorder
+
+    # No capabilities and NO host networking: this container only needs outbound
+    # HTTPS. It reaches the recorder through a read-only volume, not the network.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    init: true
+    pids_limit: 32
+    mem_limit: 128m
+    cpus: 0.25
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    tmpfs:
+      - /tmp
+
+    volumes:
+      # Read-only: the agent must never be able to alter the evidence it reads.
+      - egress-data:/data:ro
+      - agent-state:/state
+
+    environment:
+      MSP_DOMAIN: "${MSP_DOMAIN:-}"
+      MSP_TOKEN: "${MSP_TOKEN:-}"
+      POLL_SECONDS: "60"
+      # 1 = Security Activity. Types carrying a remote host: 1,2,8,9,10,16.
+      ALARM_TYPES: "1"
+      # Set true to stay silent unless the recorder actually has evidence.
+      ONLY_WITH_MATCH: "false"
+      HISTORY_MINUTES: "1440"
+
+      # Notifications: ntfy | telegram | webhook | none
+      NOTIFY: "${NOTIFY:-ntfy}"
+      NTFY_TOPIC: "${NTFY_TOPIC:-}"
+      NTFY_SERVER: "${NTFY_SERVER:-https://ntfy.sh}"
+
+      # LLM analysis: none | anthropic | openai. OFF by default - this is the only
+      # step that sends anything off the node, so it is opt-in.
+      LLM: "${LLM:-none}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+
 volumes:
   egress-data:
+  agent-state:
