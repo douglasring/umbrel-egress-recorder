@@ -137,3 +137,46 @@ class TestAttributionJoin(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConfigFallback(unittest.TestCase):
+    """Config must not depend on compose substitution, which Portainer may not apply."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, "agent.env")
+        import agent.__main__ as m
+        self.m = m
+        self._orig = m.CONFIG_FILE
+        m.CONFIG_FILE = self.path
+
+    def tearDown(self):
+        self.m.CONFIG_FILE = self._orig
+        for k in ("MSP_DOMAIN", "MSP_TOKEN"):
+            os.environ.pop(k, None)
+        self.dir.cleanup()
+
+    def test_file_fills_missing_values(self):
+        open(self.path, "w").write("MSP_DOMAIN=a.example\nMSP_TOKEN=tok\n")
+        c = self.m.cfg()
+        self.assertEqual(c["MSP_DOMAIN"], "a.example")
+        self.assertEqual(c["MSP_TOKEN"], "tok")
+
+    def test_file_fills_empty_substitution(self):
+        """The actual Portainer failure: the var exists but substituted to ''."""
+        os.environ["MSP_DOMAIN"] = ""
+        open(self.path, "w").write("MSP_DOMAIN=b.example\n")
+        self.assertEqual(self.m.cfg()["MSP_DOMAIN"], "b.example")
+
+    def test_real_env_value_wins_over_file(self):
+        os.environ["MSP_DOMAIN"] = "env.example"
+        open(self.path, "w").write("MSP_DOMAIN=file.example\n")
+        self.assertEqual(self.m.cfg()["MSP_DOMAIN"], "env.example")
+
+    def test_quotes_and_comments_tolerated(self):
+        open(self.path, "w").write('# note\nMSP_TOKEN="quoted-tok"\n\n')
+        self.assertEqual(self.m.cfg()["MSP_TOKEN"], "quoted-tok")
+
+    def test_missing_file_is_not_an_error(self):
+        self.m.CONFIG_FILE = os.path.join(self.dir.name, "absent.env")
+        self.assertIsInstance(self.m.cfg(), dict)

@@ -38,8 +38,32 @@ def log(msg):
     sys.stdout.flush()
 
 
+CONFIG_FILE = os.environ.get("CONFIG_FILE", "/state/agent.env")
+
+
 def cfg():
-    return dict(os.environ)
+    """Environment, with /state/agent.env filling any gaps.
+
+    Compose variable substitution is not always reliable in Portainer - with a
+    Git-backed stack the .env it writes may not sit beside the compose file, and the
+    values silently resolve to empty. Reading a file on the agent's own writable
+    volume removes that dependency entirely, and keeps credentials out of the public
+    repository. Real environment variables still win when they carry a value.
+    """
+    conf = dict(os.environ)
+    try:
+        with open(CONFIG_FILE) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key, val = key.strip(), val.strip().strip('"').strip("'")
+                if val and not (conf.get(key) or "").strip():
+                    conf[key] = val
+    except OSError:
+        pass
+    return conf
 
 
 def load_state():
@@ -146,32 +170,34 @@ def handle(alarm, store, conf):
 
 
 def main():
-    conf = cfg()
-    domain, token = conf.get("MSP_DOMAIN"), conf.get("MSP_TOKEN")
-    if not (domain and token):
-        # Say which one is missing and what the container actually received. A bare
-        # "required" message sends the operator digging through Portainer with no
-        # way to tell an unset variable from an empty substitution.
-        log("FATAL: missing configuration")
+    # Wait for configuration rather than exiting. Exiting made the container
+    # crash-loop, which meant no console - and the console is where the operator can
+    # write /state/agent.env when compose substitution is not delivering the values.
+    while True:
+        conf = cfg()
+        domain, token = conf.get("MSP_DOMAIN"), conf.get("MSP_TOKEN")
+        if (domain or "").strip() and (token or "").strip():
+            break
+        log("WAITING: missing configuration")
         for name in ("MSP_DOMAIN", "MSP_TOKEN"):
             val = conf.get(name)
             if val is None:
-                state = "NOT SET (the variable never reached the container)"
+                state = "NOT SET (never reached the container)"
             elif not val.strip():
-                state = "SET BUT EMPTY (compose substituted nothing - the stack "
-                state += "environment variable is missing or misnamed)"
+                state = "SET BUT EMPTY (compose substituted nothing)"
             elif name == "MSP_TOKEN":
                 state = "ok (%d chars)" % len(val)
             else:
                 state = "ok (%r)" % val
             log("  %-11s : %s" % (name, state))
-        relevant = sorted(k for k in conf
-                          if k.startswith(("MSP_", "NTFY_", "NOTIFY", "LLM", "POLL_",
-                                           "ALARM_", "ONLY_", "TELEGRAM_")))
-        log("  related variables present: %s" % (", ".join(relevant) or "NONE"))
-        log("  In Portainer: Stacks -> this stack -> Environment variables, then "
-            "Update the stack. Values set after deploy are not applied until then.")
-        return 2
+        log("  Fix either way:")
+        log("    A) Portainer -> Stacks -> Environment variables -> Update the stack")
+        log("    B) this container's Console (/bin/sh), then:")
+        log('       printf \'MSP_DOMAIN=your.msp.host\\nMSP_TOKEN=your-token\\n\' > %s'
+            % CONFIG_FILE)
+        log("  Re-checking every 30s; no restart needed once the file exists.")
+        for _ in range(30):
+            time.sleep(1)
 
     interval = int(conf.get("POLL_SECONDS", "60"))
     types = tuple(int(t) for t in (conf.get("ALARM_TYPES", "1")).split(",") if t.strip())
