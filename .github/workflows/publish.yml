@@ -31,8 +31,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          # Umbrel runs on both Raspberry Pi (arm64) and x86_64 hardware.
-          platforms: linux/amd64,linux/arm64
+          # amd64 only. Umbrel also ships on Raspberry Pi, but the arm64 half is
+          # built under QEMU emulation and apt-get install of ca-certificates there
+          # takes 40+ minutes - long enough that a one-line fix cannot be shipped.
+          # TODO: restore linux/arm64 via a native arm64 runner, or a scheduled
+          # build, rather than blocking every release on emulation.
+          platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
