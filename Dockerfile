@@ -21,7 +21,11 @@ FROM debian:12-slim AS base
 # can remove packages this image needs.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends tcpdump python3; \
+    # ca-certificates is NOT in debian-slim. Without it Python has no CA bundle and
+    # every HTTPS call fails with CERTIFICATE_VERIFY_FAILED - which is how the agent
+    # could not reach the Firewalla MSP API. The recorder never needed it, so this
+    # was missed until the agent made the first outbound TLS request.
+    apt-get install -y --no-install-recommends tcpdump python3 ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     # Nothing that could move data off the node stays in the image.
     rm -f /usr/bin/wget /usr/bin/curl; \
@@ -35,7 +39,8 @@ RUN set -eux; \
     # Fail the BUILD if the runtime prerequisites are missing, rather than at container
     # start where the only symptom is an exited container.
     python3 -c "import sqlite3, struct, ipaddress; print('python ok', sqlite3.sqlite_version)"; \
-    tcpdump --version
+    tcpdump --version; \
+    python3 -c "import ssl; ctx=ssl.create_default_context(); assert ctx.cert_store_stats()['x509_ca'] > 0, 'no CA certificates'; print('CA store ok:', ctx.cert_store_stats())"
 
 WORKDIR /app
 COPY recorder/ /app/recorder/
