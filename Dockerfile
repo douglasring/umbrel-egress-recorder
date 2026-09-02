@@ -71,7 +71,13 @@ VOLUME ["/data"]
 RUN set -eux; \
     python3 -c "import recorder.pcap, recorder.store, recorder.capture, recorder.cli"; \
     python3 -c "import agent.msp, agent.notify, agent.analyze"; \
-    python3 -m agent 2>&1 | grep -q "FATAL: missing configuration"; \
+    # The agent intentionally waits for configuration instead of exiting, so it
+    # must be run under a timeout here and its output captured to a file. Piping a
+    # non-terminating process into `grep -q` for a string it never prints hangs the
+    # build forever - which is exactly what happened, for hours, undiagnosed.
+    timeout 20 python3 -m agent > /tmp/agentcheck.log 2>&1 || true; \
+    grep -q "WAITING: missing configuration" /tmp/agentcheck.log; \
+    rm -f /tmp/agentcheck.log; \
     DB_PATH=/tmp/selftest.db python3 -m recorder status 2>&1 \
       | grep -q "umbrel-egress-recorder status"; \
     DB_PATH=/tmp/selftest.db lookup 203.0.113.42 | grep -q "NO MATCH"; \
