@@ -135,26 +135,34 @@ services:
       - agent-state:/state
 
     environment:
-      MSP_DOMAIN: "${MSP_DOMAIN:-}"
-      MSP_TOKEN: "${MSP_TOKEN:-}"
+      # NO credentials here, and no ${...} substitution.
+      #
+      # Portainer stack environment variables did not survive a pull-and-redeploy on
+      # this deployment, and compose substitution was not applying them reliably in a
+      # Git-backed stack. Either way the agent would silently lose its configuration
+      # on an update, which is the worst possible failure for a thing you only check
+      # after an incident.
+      #
+      # Credentials live in /state/agent.env instead - the agent's own named volume,
+      # which persists across redeploys, stack edits and image changes, and is never
+      # in this public repository. Write it once from the container console:
+      #
+      #   cat > /state/agent.env <<'END'
+      #   MSP_DOMAIN=your.msp.host
+      #   MSP_TOKEN=your-token
+      #   NTFY_TOPIC=your-private-topic
+      #   END
+      #
+      # The agent waits for that file rather than exiting, so the container stays up
+      # and its console stays reachable while you do it.
       POLL_SECONDS: "60"
-      # 1 = Security Activity. Types carrying a remote host: 1,2,8,9,10,16.
       ALARM_TYPES: "1"
-      # Set true to stay silent unless the recorder actually has evidence.
       ONLY_WITH_MATCH: "false"
       HISTORY_MINUTES: "1440"
+      NOTIFY: "ntfy"
+      NTFY_SERVER: "https://ntfy.sh"
+      LLM: "none"
 
-      # Notifications: ntfy | telegram | webhook | none
-      NOTIFY: "${NOTIFY:-ntfy}"
-      NTFY_TOPIC: "${NTFY_TOPIC:-}"
-      NTFY_SERVER: "${NTFY_SERVER:-https://ntfy.sh}"
-
-      # LLM analysis: none | anthropic | openai. OFF by default - this is the only
-      # step that sends anything off the node, so it is opt-in.
-      LLM: "${LLM:-none}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-
-volumes:
+volumes:volumes:
   egress-data:
   agent-state:
