@@ -149,7 +149,28 @@ def main():
     conf = cfg()
     domain, token = conf.get("MSP_DOMAIN"), conf.get("MSP_TOKEN")
     if not (domain and token):
-        log("FATAL: MSP_DOMAIN and MSP_TOKEN are required")
+        # Say which one is missing and what the container actually received. A bare
+        # "required" message sends the operator digging through Portainer with no
+        # way to tell an unset variable from an empty substitution.
+        log("FATAL: missing configuration")
+        for name in ("MSP_DOMAIN", "MSP_TOKEN"):
+            val = conf.get(name)
+            if val is None:
+                state = "NOT SET (the variable never reached the container)"
+            elif not val.strip():
+                state = "SET BUT EMPTY (compose substituted nothing - the stack "
+                state += "environment variable is missing or misnamed)"
+            elif name == "MSP_TOKEN":
+                state = "ok (%d chars)" % len(val)
+            else:
+                state = "ok (%r)" % val
+            log("  %-11s : %s" % (name, state))
+        relevant = sorted(k for k in conf
+                          if k.startswith(("MSP_", "NTFY_", "NOTIFY", "LLM", "POLL_",
+                                           "ALARM_", "ONLY_", "TELEGRAM_")))
+        log("  related variables present: %s" % (", ".join(relevant) or "NONE"))
+        log("  In Portainer: Stacks -> this stack -> Environment variables, then "
+            "Update the stack. Values set after deploy are not applied until then.")
         return 2
 
     interval = int(conf.get("POLL_SECONDS", "60"))

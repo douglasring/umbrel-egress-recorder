@@ -66,7 +66,7 @@ VOLUME ["/data"]
 RUN set -eux; \
     python3 -c "import recorder.pcap, recorder.store, recorder.capture, recorder.cli"; \
     python3 -c "import agent.msp, agent.notify, agent.analyze"; \
-    python3 -m agent 2>&1 | grep -q "MSP_DOMAIN and MSP_TOKEN are required"; \
+    python3 -m agent 2>&1 | grep -q "FATAL: missing configuration"; \
     DB_PATH=/tmp/selftest.db python3 -m recorder status 2>&1 \
       | grep -q "umbrel-egress-recorder status"; \
     DB_PATH=/tmp/selftest.db lookup 203.0.113.42 | grep -q "NO MATCH"; \
