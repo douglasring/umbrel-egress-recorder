@@ -163,6 +163,6 @@ services:
       NTFY_SERVER: "https://ntfy.sh"
       LLM: "none"
 
-volumes:volumes:
+volumes:
   egress-data:
   agent-state:
