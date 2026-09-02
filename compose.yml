@@ -11,7 +11,7 @@
 
 services:
   egress-recorder:
-    image: ghcr.io/douglasring/umbrel-egress-recorder@sha256:e8ae9c39adc9c0da304410b9ba4d255e5475c747cf0744c6d9ecf4144eeabcde
+    image: ghcr.io/douglasring/umbrel-egress-recorder@sha256:4a5a3fa02fd351eeeae6437a43840f66d15054de2db8c4b54637f3550aae584e
     container_name: umbrel-egress-recorder
     network_mode: host
     restart: unless-stopped
@@ -101,7 +101,7 @@ services:
   # inject packets on your LAN.
   # ---------------------------------------------------------------------------
   alarm-agent:
-    image: ghcr.io/douglasring/umbrel-egress-recorder@sha256:e8ae9c39adc9c0da304410b9ba4d255e5475c747cf0744c6d9ecf4144eeabcde
+    image: ghcr.io/douglasring/umbrel-egress-recorder@sha256:4a5a3fa02fd351eeeae6437a43840f66d15054de2db8c4b54637f3550aae584e
     container_name: umbrel-alarm-agent
     entrypoint: ["python3", "-m", "agent"]
     restart: unless-stopped
